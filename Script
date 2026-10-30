@@ -1,0 +1,612 @@
+-- Super Tag: ULTIMATE Edition (Loading Screen, Mega Decoration, Tabs, Lang)
+-- Developer: 2t0
+local Players = game:GetService("Players")
+local PathfindingService = game:GetService("PathfindingService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
+
+local LocalPlayer = Players.LocalPlayer
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ================= НАСТРОЙКИ =================
+local CLICK_SOUND_ID = "rbxassetid://6895079853"
+local FINISH_PART_NAME = "FinishPart"
+local PODIUM_NAME = "ObbyWinnerPodium"
+local EMOTE_TO_PLAY = "Car ShearerEntry"
+local DANGER_DISTANCE = 60 
+local ABILITY_MAX_RANGE = 25 
+local ABILITY_MIN_RANGE = 5 
+local ABILITY_COOLDOWN = 30 
+
+-- === ЛОКАЛИЗАЦИЯ (ПО УМОЛЧАНИЮ EN) ===
+local currentLang = "EN"
+local Loc = {
+    RU = {
+        tab1 = "ЧИТЫ", tab2 = "НАСТРОЙКИ",
+        esp_on = "👁️ ESP: ВКЛ", esp_off = "👁️ ESP: ВЫКЛ",
+        tp_on = "🏃 АВТО-ТП: ВКЛ", tp_off = "🏃 АВТО-ТП: ВЫКЛ",
+        evade_on = "🛡️ УМНЫЙ ПОБЕГ: ВКЛ", evade_off = "🛡️ УМНЫЙ ПОБЕГ: ВЫКЛ",
+        ability_on = "⚡ СПОСОБНОСТЬ: ВКЛ", ability_off = "⚡ СПОСОБНОСТЬ: ВЫКЛ",
+        lobby_on = "🏆 ТП К ФИНИШУ: ВКЛ", lobby_off = "🏆 ТП К ФИНИШУ: ВЫКЛ",
+        speed = "Скорость: ", reset = "Сброс", lang = "Язык: ",
+        status_wait = "СТАТУС: ОЖИДАНИЕ", role_tagger = "ВЫ: ОХОТНИК", role_runner = "ВЫ: ВЫЖИВШИЙ", role_lobby = "ВЫ: В ЛОББИ",
+        wait_round = "Ожидание начала раунда...", hunt_runners = "Охотьтесь на раннеров!", run_taggers = "Убегайте от тэггеров!",
+        run_holder = "Бегите от Holder!", run_safe = "Убегайте от Holder!",
+        ab_ready = "⚡ СПОСОБНОСТЬ: ГОТОВА", ab_cd = "⚡ СПОСОБНОСТЬ: КД %dс", ab_wait = "⚡ СПОСОБНОСТЬ: ЖДЕТ РОЛЬ"
+    },
+    EN = {
+        tab1 = "CHEATS", tab2 = "SETTINGS",
+        esp_on = "👁️ ESP: ON", esp_off = "👁️ ESP: OFF",
+        tp_on = "🏃 AUTO-TP: ON", tp_off = "🏃 AUTO-TP: OFF",
+        evade_on = "🛡️ SMART EVADE: ON", evade_off = "🛡️ SMART EVADE: OFF",
+        ability_on = "⚡ ABILITY: ON", ability_off = "⚡ ABILITY: OFF",
+        lobby_on = "🏆 FINISH TP: ON", lobby_off = "🏆 FINISH TP: OFF",
+        speed = "Speed: ", reset = "Reset", lang = "Language: ",
+        status_wait = "STATUS: WAITING", role_tagger = "YOU: HUNTER", role_runner = "YOU: SURVIVOR", role_lobby = "YOU: IN LOBBY",
+        wait_round = "Waiting for round...", hunt_runners = "Hunt the runners!", run_taggers = "Run from taggers!",
+        run_holder = "Run from Holder!", run_safe = "Run from Holder!",
+        ab_ready = "⚡ ABILITY: READY", ab_cd = "⚡ ABILITY: CD %ds", ab_wait = "⚡ ABILITY: WAIT ROLE"
+    }
+}
+
+local isESPOn = false
+local isAutoTP = false
+local isAutoEvade = false
+local isAutoLobbyTP = false 
+local isAbilitySpam = false
+local espObjects = {}
+local tpTask = nil
+local evadeTask = nil
+local abilityTask = nil
+local abilityLastUse = 0
+local canTPToLobby = false 
+
+-- ================= ХЕЛПЕРЫ =================
+local function playClick()
+    local s = Instance.new("Sound", playerGui)
+    s.SoundId = CLICK_SOUND_ID; s.Volume = 0.5; s:Play()
+    s.Ended:Connect(function() s:Destroy() end)
+end
+
+local function getChar(plr)
+    local char = plr.Character
+    if char then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then return char, hrp, hum end
+    end
+    return nil
+end
+
+local function getRole(plr)
+    local role = plr:GetAttribute("Role")
+    if role == "Tagger" or role == "Runner" or role == "Holder" or role == "Safe" then return role end
+    return "Unknown"
+end
+
+local function findButton(nameSubstring)
+    for _, v in ipairs(playerGui:GetDescendants()) do
+if v:IsA("TextButton") or v:IsA("ImageButton") then
+            if v.Name:find(nameSubstring) then return v end
+            if v:IsA("TextButton") and v.Text:find(nameSubstring) then return v end
+            for _, child in ipairs(v:GetChildren()) do
+                if child:IsA("TextLabel") and child.Text:find(nameSubstring) then return v end
+            end
+        end
+    end
+    return nil
+end
+
+local function ultimateClick(btn)
+    if not btn then return false end
+    pcall(function() btn:Activate() end)
+    pcall(function() btn.MouseButton1Click:Fire() end)
+    pcall(function() if getconnections then for _, c in pairs(getconnections(btn.MouseButton1Click)) do c:Fire() end end end)
+    pcall(function()
+        if VirtualUser and btn.AbsoluteSize.Magnitude > 0 then
+            local pos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+            VirtualUser:Button1Down(Vector2.new(pos.X, pos.Y))
+            task.wait(0.05)
+            VirtualUser:Button1Up(Vector2.new(pos.X, pos.Y))
+        end
+    end)
+    return true
+end
+
+-- ================= ЛОГИКА (СОХРАНЕНА) =================
+local rayParams = RaycastParams.new(); rayParams.FilterType = Enum.RaycastFilterType.Exclude
+local function hasLineOfSight(from, to) return workspace:Raycast(from, to - from, rayParams) == nil end
+local function groundOk(from, to)
+    local flat = (to - from) * Vector3.new(1, 0, 1); local dist = flat.Magnitude
+    if dist < 1 then return true end
+    local dir = flat.Unit
+    for d = 3, dist, 3 do
+        if not workspace:Raycast(from + dir * d + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), rayParams) then return false end
+    end
+    return true
+end
+local function computePath(hrp, goal)
+    local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 4})
+    local ok = pcall(function() path:ComputeAsync(hrp.Position, goal) end)
+    if ok and path.Status == Enum.PathStatus.Success then return path:GetWaypoints() end
+end
+
+local FLEE_ANGLES = { 0, 25, -25, 50, -50, 80, -80, 110, -110, 150, -150 }
+local function pickFleePoint(myHrp, tHrp)
+    local away = (myHrp.Position - tHrp.Position) * Vector3.new(1, 0, 1)
+    if away.Magnitude < 0.1 then away = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) end
+    away = away.Unit
+    local best, bestScore = nil, nil
+    for _, ang in ipairs(FLEE_ANGLES) do
+        local dir = CFrame.Angles(0, math.rad(ang), 0) * away
+        local hit = workspace:Raycast(myHrp.Position, dir * 45, rayParams)
+        local free = hit and (hit.Position - myHrp.Position).Magnitude or 45
+        if free > 6 then
+            local p = myHrp.Position + dir * (free - 2)
+            local g = workspace:Raycast(p + Vector3.new(0, 3, 0), Vector3.new(0, -30, 0), rayParams)
+            if g and g.Normal.Y > 0.6 then
+                local score = ((g.Position - tHrp.Position) * Vector3.new(1, 0, 1)).Magnitude + free * 0.5 - math.abs(ang) * 0.15
+                if not bestScore or score > bestScore then best, bestScore = g.Position, score end
+            end
+        end
+    end
+    return best
+end
+
+local function startAutoEvade()
+    if evadeTask then task.cancel(evadeTask) end
+    evadeTask = task.spawn(function()
+        while isAutoEvade do
+            local myRole = getRole(LocalPlayer)
+            if myRole == "Runner" or myRole == "Safe" then
+                local myChar, myHrp, myHum = getChar(LocalPlayer)
+                local closestThreat, minDist = nil, math.huge
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    local isThreat = (myRole == "Runner" and getRole(plr) == "Tagger") or (myRole == "Safe" and getRole(plr) == "Holder")
+                    if plr ~= LocalPlayer and isThreat then
+                        local _, tHrp = getChar(plr)
+if tHrp then
+                            local d = (tHrp.Position - myHrp.Position).Magnitude
+                            if d < minDist then minDist = d; closestThreat = tHrp end
+                        end
+                    end
+                end
+                if myHum and myHrp and closestThreat and minDist < DANGER_DISTANCE then
+                    rayParams.FilterDescendantsInstances = {myChar, closestThreat.Parent}
+                    local fleePoint = pickFleePoint(myHrp, closestThreat)
+                    if fleePoint then
+                        if hasLineOfSight(myHrp.Position, fleePoint + Vector3.new(0,3,0)) and groundOk(myHrp.Position, fleePoint) then
+                            myHum:MoveTo(fleePoint)
+                        else
+                            local waypoints = computePath(myHrp, fleePoint)
+                            if waypoints then
+                                for i = 2, #waypoints do
+                                    if not isAutoEvade then break end
+                                    if waypoints[i].Action == Enum.PathWaypointAction.Jump then myHum.Jump = true end
+                                    myHum:MoveTo(waypoints[i].Position)
+                                    local t0 = os.clock()
+                                    while os.clock() - t0 < 1 do
+                                        task.wait(0.05)
+                                        if (closestThreat.Position - myHrp.Position).Magnitude < 15 then break end
+                                        if ((waypoints[i].Position - myHrp.Position) * Vector3.new(1,0,1)).Magnitude < 3 then break end
+                                    end
+                                end
+                            else myHum:MoveTo(fleePoint) end
+                        end
+                    else myHum.Jump = true end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function startAutoTP()
+    if tpTask then task.cancel(tpTask) end
+    tpTask = task.spawn(function()
+        while isAutoTP do
+            local myRole = getRole(LocalPlayer)
+            if myRole == "Tagger" or myRole == "Holder" then
+                local _, myHrp = getChar(LocalPlayer)
+                if myHrp then
+                    local closest, minDist = nil, math.huge
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        local isTarget = (myRole == "Tagger" and getRole(plr) == "Runner") or (myRole == "Holder" and getRole(plr) == "Safe")
+                        if plr ~= LocalPlayer and isTarget then
+                            local _, tHrp = getChar(plr)
+                            if tHrp then
+                                local d = (tHrp.Position - myHrp.Position).Magnitude
+                                if d < minDist then minDist = d; closest = tHrp end
+                            end
+                        end
+                    end
+                    if closest then myHrp.CFrame = closest.CFrame; task.wait(0.02) end
+                end
+            end
+            task.wait(0.05)
+        end
+    end)
+end
+
+local function startAbilitySpam()
+    if abilityTask then task.cancel(abilityTask) end
+    abilityTask = task.spawn(function()
+        while isAbilitySpam do
+            local myRole = getRole(LocalPlayer)
+            if myRole == "Runner" or myRole == "Safe" then
+                if (ABILITY_COOLDOWN - (tick() - abilityLastUse)) <= 0 then
+                    local _, myHrp = getChar(LocalPlayer)
+                    if myHrp then
+                        local threatNearby = false
+                        for _, plr in ipairs(Players:GetPlayers()) do
+                            local isThreat = (myRole == "Runner" and getRole(plr) == "Tagger") or (myRole == "Safe" and getRole(plr) == "Holder")
+local loadBarBg = Instance.new("Frame", loadScreen)
+loadBarBg.Size = UDim2.new(0, 300, 0, 4); loadBarBg.Position = UDim2.new(0.5, -150, 0.6, 0)
+loadBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30); loadBarBg.ZIndex = 101
+Instance.new("UICorner", loadBarBg).CornerRadius = UDim.new(1, 0)
+
+local loadBarFill = Instance.new("Frame", loadBarBg)
+loadBarFill.Size = UDim2.new(0, 0, 1, 0); loadBarFill.BackgroundColor3 = COLORS.text; loadBarFill.ZIndex = 102
+Instance.new("UICorner", loadBarFill).CornerRadius = UDim.new(1, 0)
+TweenService:Create(loadBarFill, TweenInfo.new(2.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+task.delay(3, function()
+    TweenService:Create(loadScreen, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+    TweenService:Create(loadTitle, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+    TweenService:Create(loadDev, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+    TweenService:Create(loadBarBg, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+    task.wait(0.5); loadScreen:Destroy()
+end)
+
+-- == КРУГЛАЯ КНОПКА (SUPER TAG) == --
+local toggleBtn = Instance.new("TextButton", gui)
+toggleBtn.Size = UDim2.fromOffset(80, 80); toggleBtn.Position = UDim2.fromOffset(20, 20)
+toggleBtn.BackgroundColor3 = COLORS.bg; toggleBtn.Text = ""; toggleBtn.AutoButtonColor = false
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1, 0)
+
+local ringFrame = Instance.new("Frame", toggleBtn)
+ringFrame.Size = UDim2.new(1.2, 0, 1.2, 0); ringFrame.Position = UDim2.new(-0.1, 0, -0.1, 0)
+ringFrame.BackgroundTransparency = 1
+local ringStroke = Instance.new("UIStroke", ringFrame); ringStroke.Color = COLORS.stroke; ringStroke.Thickness = 1.5; ringStroke.Transparency = 0.5
+local ringGrad = Instance.new("UIGradient", ringStroke); ringGrad.Color = ColorSequence.new(Color3.new(1,1,1), Color3.new(0,0,0))
+Instance.new("UICorner", ringFrame).CornerRadius = UDim.new(1, 0)
+
+local icon = Instance.new("TextLabel", toggleBtn)
+icon.Size = UDim2.fromScale(1, 1); icon.BackgroundTransparency = 1
+icon.Text = "SUPER\nTAG"; icon.TextColor3 = COLORS.text; icon.TextSize = 16; icon.Font = Enum.Font.GothamBlack
+icon.TextWrapped = true; icon.ZIndex = 2
+
+-- Внутренний пульсирующий круг
+local pulseDot = Instance.new("Frame", toggleBtn)
+pulseDot.Size = UDim2.fromOffset(10, 10); pulseDot.Position = UDim2.new(0.5, -5, 0.8, -5)
+pulseDot.BackgroundColor3 = COLORS.accent; pulseDot.ZIndex = 3
+Instance.new("UICorner", pulseDot).CornerRadius = UDim.new(1, 0)
+task.spawn(function()
+    while pulseDot.Parent do
+        TweenService:Create(pulseDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {Size = UDim2.fromOffset(20, 20), Position = UDim2.new(0.5, -10, 0.8, -10), BackgroundTransparency = 0.5}):Play()
+        task.wait(0.8)
+        TweenService:Create(pulseDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {Size = UDim2.fromOffset(10, 10), Position = UDim2.new(0.5, -5, 0.8, -5), BackgroundTransparency = 0}):Play()
+        task.wait(0.8)
+    end
+end)
+
+toggleBtn.MouseEnter:Connect(function()
+    TweenService:Create(toggleBtn, TweenInfo.new(0.2), {Size = UDim2.fromOffset(85, 85), Position = UDim2.fromOffset(17.5, 17.5)}):Play()
+    TweenService:Create(ringStroke, TweenInfo.new(0.2), {Thickness = 3, Transparency = 0}):Play()
+end)
+toggleBtn.MouseLeave:Connect(function()
+    TweenService:Create(toggleBtn, TweenInfo.new(0.2), {Size = UDim2.fromOffset(80, 80), Position = UDim2.fromOffset(20, 20)}):Play()
+    TweenService:Create(ringStroke, TweenInfo.new(0.2), {Thickness = 1.5, Transparency = 0.5}):Play()
+end)
+
+task.spawn(function() while toggleBtn.Parent do task.wait(0.03) ringFrame.Rotation = (ringFrame.Rotation + 2) % 360 end end)
+
+local dragging, dragStart, startPos
+toggleBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+dragging = true; dragStart = input.Position; startPos = toggleBtn.Position
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        toggleBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- == ГЛАВНАЯ ПАНЕЛЬ == --
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.fromOffset(320, 480); main.Position = UDim2.new(0.5, -160, 0.5, -240)
+main.BackgroundColor3 = COLORS.bg; main.Active = true; main.Draggable = true; main.Visible = false
+main.ClipsDescendants = true 
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
+
+-- 1. Неоновая обводка
+local mStrokeOuter = Instance.new("UIStroke", main); mStrokeOuter.Color = COLORS.stroke; mStrokeOuter.Thickness = 2; mStrokeOuter.Transparency = 0.2
+local bgGrad = Instance.new("UIGradient", main)
+bgGrad.Color = ColorSequence.new(Color3.fromRGB(25, 25, 25), Color3.fromRGB(5, 5, 5))
+task.spawn(function() while main.Parent do task.wait(0.05) bgGrad.Rotation = (bgGrad.Rotation + 2) % 360 end end)
+
+-- 2. Фоновая сетка
+local gridFrame = Instance.new("Frame", main); gridFrame.Size = UDim2.fromScale(1, 1); gridFrame.BackgroundTransparency = 1
+for i = 0, 20 do
+    local l = Instance.new("Frame", gridFrame); l.Size = UDim2.new(1, 0, 0, 1); l.Position = UDim2.new(0, 0, i * 0.05, 0); l.BackgroundColor3 = Color3.new(1,1,1); l.BackgroundTransparency = 0.95
+    local v = Instance.new("Frame", gridFrame); v.Size = UDim2.new(0, 1, 1, 0); v.Position = UDim2.new(i * 0.05, 0, 0, 0); v.BackgroundColor3 = Color3.new(1,1,1); v.BackgroundTransparency = 0.95
+end
+
+-- 3. Углы
+local function createBracket(x, y, rotX, rotY)
+    local b = Instance.new("Frame", main); b.Size = UDim2.fromOffset(20, 20); b.Position = UDim2.new(x, 0, y, 0); b.BackgroundTransparency = 1
+    local l1 = Instance.new("Frame", b); l1.Size = UDim2.new(1, 0, 0, 2); l1.Position = UDim2.new(rotX, 0, rotY, 0); l1.BackgroundColor3 = COLORS.stroke; l1.BorderSizePixel = 0
+    local l2 = Instance.new("Frame", b); l2.Size = UDim2.new(0, 2, 1, 0); l2.Position = UDim2.new(rotX, 0, rotY, 0); l2.BackgroundColor3 = COLORS.stroke; l2.BorderSizePixel = 0
+end
+createBracket(0, 0, 0, 0); createBracket(1, 0, 1, 0); createBracket(0, 1, 0, 1); createBracket(1, 1, 1, 1)
+
+-- Заголовок
+local header = Instance.new("Frame", main)
+header.Size = UDim2.new(1, 0, 0, 65); header.BackgroundColor3 = Color3.fromRGB(15, 15, 15); header.Parent = main
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 14)
+local hMask = Instance.new("Frame", header); hMask.Size = UDim2.new(1, 0, 0.5, 0); hMask.Position = UDim2.new(0, 0, 0.5, 0); hMask.BackgroundColor3 = Color3.fromRGB(15, 15, 15); hMask.BorderSizePixel = 0
+
+local title = Instance.new("TextLabel", header); title.Size = UDim2.new(1, -40, 0.6, 0); title.Position = UDim2.fromOffset(15, 8)
+title.BackgroundTransparency = 1; title.Text = "SUPER TAG"; title.TextColor3 = COLORS.text; title.Font = Enum.Font.GothamBlack; title.TextSize = 22; title.TextXAlignment = Enum.TextXAlignment.Left
+
+local devLabel = Instance.new("TextLabel", header); devLabel.Size = UDim2.new(1, -40, 0.4, 0); devLabel.Position = UDim2.fromOffset(15, 35)
+devLabel.BackgroundTransparency = 1; devLabel.Text = "ULTIMATE EDITION | DEV: @2t0"; devLabel.TextColor3 = COLORS.subtext; devLabel.Font = Enum.Font.Code; devLabel.TextSize = 11; devLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local closeBtn = Instance.new("TextButton", header); closeBtn.Size = UDim2.fromOffset(34, 34); closeBtn.Position = UDim2.new(1, -44, 0.5, -17)
+closeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); closeBtn.Text = "✕"; closeBtn.TextColor3 = COLORS.text; closeBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
+local cStroke = Instance.new("UIStroke", closeBtn); cStroke.Color = COLORS.accent; cStroke.Thickness = 1; cStroke.Transparency = 0.3
+closeBtn.MouseEnter:Connect(function() TweenService:Create(closeBtn, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent, TextColor3 = Color3.new(1,1,1)}):Play() end)
+closeBtn.MouseLeave:Connect(function() TweenService:Create(closeBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(30, 30, 30), TextColor3 = COLORS.text}):Play() end)
+-- СИСТЕМА ВКЛАДОК
+local tabHolder = Instance.new("Frame", main)
+tabHolder.Size = UDim2.new(1, -30, 0, 32); tabHolder.Position = UDim2.new(0, 15, 0, 72)
+tabHolder.BackgroundColor3 = Color3.fromRGB(20, 20, 20); tabHolder.BorderSizePixel = 0
+Instance.new("UICorner", tabHolder).CornerRadius = UDim.new(0, 8)
+
+local tabBtn1 = Instance.new("TextButton", tabHolder)
+tabBtn1.Size = UDim2.new(0.5, -4, 1, 0); tabBtn1.Position = UDim2.new(0, 4, 0, 0)
+tabBtn1.BackgroundColor3 = COLORS.on; tabBtn1.Text = Loc[currentLang].tab1; tabBtn1.TextColor3 = Color3.new(0,0,0)
+tabBtn1.Font = Enum.Font.GothamBold; tabBtn1.TextSize = 13; tabBtn1.AutoButtonColor = false
+Instance.new("UICorner", tabBtn1).CornerRadius = UDim.new(0, 8)
+
+local tabBtn2 = Instance.new("TextButton", tabHolder)
+tabBtn2.Size = UDim2.new(0.5, -4, 1, 0); tabBtn2.Position = UDim2.new(0.5, 0, 0, 0)
+tabBtn2.BackgroundColor3 = Color3.fromRGB(40, 40, 40); tabBtn2.Text = Loc[currentLang].tab2; tabBtn2.TextColor3 = COLORS.subtext
+tabBtn2.Font = Enum.Font.GothamBold; tabBtn2.TextSize = 13; tabBtn2.AutoButtonColor = false
+Instance.new("UICorner", tabBtn2).CornerRadius = UDim.new(0, 8)
+
+-- ВКЛАДКА 1: ЧИТЫ
+local tab1 = Instance.new("Frame", main)
+tab1.Size = UDim2.new(1, 0, 0, 260); tab1.Position = UDim2.new(0, 0, 0, 110)
+tab1.BackgroundTransparency = 1
+
+local function makeDecoBtn(text, yPos, isActive, parentFrame)
+    local b = Instance.new("TextButton", parentFrame)
+    b.Size = UDim2.new(1, -30, 0, 40); b.Position = UDim2.new(0, 15, 0, yPos)
+    b.BackgroundColor3 = isActive and COLORS.on or COLORS.off
+    b.Text = text; b.TextColor3 = isActive and Color3.fromRGB(0,0,0) or COLORS.text
+    b.Font = Enum.Font.GothamBold; b.TextSize = 13; b.AutoButtonColor = false
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    
+    local accentBar = Instance.new("Frame", b)
+    accentBar.Size = UDim2.new(0, 4, 1, 0); accentBar.BackgroundColor3 = isActive and Color3.fromRGB(0,0,0) or COLORS.stroke; accentBar.BorderSizePixel = 0
+    Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 8)
+    
+    local s = Instance.new("UIStroke", b); s.Color = COLORS.stroke; s.Thickness = 1; s.Transparency = isActive and 0 or 0.8
+    local glow = Instance.new("UIStroke", b); glow.Color = COLORS.text; glow.Thickness = 3; glow.Transparency = 1; glow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    
+    b.MouseEnter:Connect(function()
+        if not isActive then TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(50, 50, 50)}):Play() end
+        TweenService:Create(glow, TweenInfo.new(0.15), {Transparency = 0.5}):Play()
+    end)
+    b.MouseLeave:Connect(function()
+        if not isActive then TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = COLORS.off}):Play() end
+        TweenService:Create(glow, TweenInfo.new(0.15), {Transparency = 1}):Play()
+    end)
+    return b, accentBar, s, glow
+end
+
+local btnESP, barESP, strESP, glowESP = makeDecoBtn(Loc[currentLang].esp_off, 0, false, tab1)
+local btnTP, barTP, strTP, glowTP = makeDecoBtn(Loc[currentLang].tp_off, 48, false, tab1)
+local btnEvade, barEvade, strEvade, glowEvade = makeDecoBtn(Loc[currentLang].evade_off, 96, false, tab1)
+local btnAbility, barAbility, strAbility, glowAb = makeDecoBtn(Loc[currentLang].ability_off, 144, false, tab1)
+local btnLobby, barLobby, strLobby, glowLob = makeDecoBtn(Loc[currentLang].lobby_off, 192, false, tab1)
+
+-- ВКЛАДКА 2: НАСТРОЙКИ
+local tab2 = Instance.new("Frame", main)
+tab2.Size = UDim2.new(1, 0, 0, 260); tab2.Position = UDim2.new(0, 0, 0, 110)
+tab2.BackgroundTransparency = 1; tab2.Visible = false
+
+local speedFrame = Instance.new("Frame", tab2)
+speedFrame.Size = UDim2.new(1, -30, 0, 50); speedFrame.Position = UDim2.new(0, 15, 0, 0)
+speedFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20); speedFrame.BorderSizePixel = 0
+Instance.new("UICorner", speedFrame).CornerRadius = UDim.new(0, 8)
+local sStroke = Instance.new("UIStroke", speedFrame); sStroke.Color = COLORS.stroke; sStroke.Thickness = 1; sStroke.Transparency = 0.8
+local speedLabel = Instance.new("TextLabel", speedFrame)
+speedLabel.Size = UDim2.new(1, -80, 0, 20); speedLabel.Position = UDim2.new(0, 5, 0, 0)
+speedLabel.BackgroundTransparency = 1; speedLabel.Text = Loc[currentLang].speed .. "16"
+speedLabel.TextColor3 = COLORS.text; speedLabel.Font = Enum.Font.GothamBold; speedLabel.TextSize = 13; speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local track = Instance.new("Frame", speedFrame)
+track.Size = UDim2.new(1, -20, 0, 8); track.Position = UDim2.new(0, 10, 0, 32)
+track.BackgroundColor3 = Color3.fromRGB(50, 50, 50); track.BorderSizePixel = 0
+Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+local fill = Instance.new("Frame", track)
+fill.Size = UDim2.new(0, 0, 1, 0); fill.BackgroundColor3 = COLORS.on; fill.BorderSizePixel = 0
+Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+local knob = Instance.new("TextButton", track)
+knob.Size = UDim2.fromOffset(22, 22); knob.Position = UDim2.new(0, -11, 0.5, -11)
+knob.BackgroundColor3 = COLORS.on; knob.Text = ""; knob.AutoButtonColor = false
+Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+local kStroke = Instance.new("UIStroke", knob); kStroke.Color = COLORS.stroke; kStroke.Thickness = 2
+
+local isDraggingSlider = false
+local minSpeed, maxSpeed = 16, 100
+
+local function setSpeed(speed)
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = speed end
+    speedLabel.Text = Loc[currentLang].speed .. math.floor(speed)
+    local alpha = (speed - minSpeed) / (maxSpeed - minSpeed)
+    knob.Position = UDim2.new(alpha, -11, 0.5, -11)
+    fill.Size = UDim2.new(alpha, 0, 1, 0)
+end
+
+knob.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDraggingSlider = true end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDraggingSlider = false end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if isDraggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local alpha = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        setSpeed(minSpeed + (maxSpeed - minSpeed) * alpha)
+    end
+end)
+
+local resetSpeedBtn = Instance.new("TextButton", speedFrame)
+resetSpeedBtn.Size = UDim2.fromOffset(60, 22); resetSpeedBtn.Position = UDim2.new(1, -65, 0, 2)
+resetSpeedBtn.BackgroundColor3 = COLORS.off; resetSpeedBtn.Text = Loc[currentLang].reset; resetSpeedBtn.TextColor3 = COLORS.text; resetSpeedBtn.Font = Enum.Font.GothamBold; resetSpeedBtn.TextSize = 11
+Instance.new("UICorner", resetSpeedBtn).CornerRadius = UDim.new(0, 6)
+resetSpeedBtn.MouseButton1Click:Connect(function() setSpeed(16) end)
+
+local langBtn = Instance.new("TextButton", tab2)
+langBtn.Size = UDim2.new(1, -30, 0, 40); langBtn.Position = UDim2.new(0, 15, 0, 65)
+langBtn.BackgroundColor3 = COLORS.off; langBtn.Text = Loc[currentLang].lang .. currentLang; langBtn.TextColor3 = COLORS.text; langBtn.Font = Enum.Font.GothamBold; langBtn.TextSize = 13
+Instance.new("UICorner", langBtn).CornerRadius = UDim.new(0, 8)
+langBtn.MouseButton1Click:Connect(function()
+    currentLang = (currentLang == "RU") and "EN" or "RU"
+    langBtn.Text = Loc[currentLang].lang .. currentLang
+    updateAllText()
+end)
+
+-- СТАТУС ПАНЕЛЬ
+local infoFrame = Instance.new("Frame", main)
+infoFrame.Size = UDim2.new(1, -30, 0, 55); infoFrame.Position = UDim2.new(0, 15, 1, -70)
+infoFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 8)
+local iStroke = Instance.new("UIStroke", infoFrame); iStroke.Color = COLORS.stroke; iStroke.Thickness = 1; iStroke.Transparency = 0.5
+local dot = Instance.new("Frame", infoFrame); dot.Size = UDim2.fromOffset(10, 10); dot.Position = UDim2.new(0, 12, 0.5, -5); dot.BackgroundColor3 = COLORS.stroke; dot.BorderSizePixel = 0
+Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+task.spawn(function() while infoFrame.Parent do TweenService:Create(dot, TweenInfo.new(0.6), {BackgroundTransparency = 0.8}):Play() task.wait(0.6) TweenService:Create(dot, TweenInfo.new(0.6), {BackgroundTransparency = 0}):Play() task.wait(0.6) end end)
+
+local statusLbl = Instance.new("TextLabel", infoFrame); statusLbl.Size = UDim2.new(1, -35, 0.5, 0); statusLbl.Position = UDim2.new(0, 30, 0.1, 0)
+statusLbl.BackgroundTransparency = 1; statusLbl.Text = Loc[currentLang].status_wait; statusLbl.TextColor3 = COLORS.text; statusLbl.Font = Enum.Font.GothamBold; statusLbl.TextSize = 13; statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local statusSub = Instance.new("TextLabel", infoFrame); statusSub.Size = UDim2.new(1, -35, 0.4, 0); statusSub.Position = UDim2.new(0, 30, 0.5, 0)
+statusSub.BackgroundTransparency = 1; statusSub.Text = Loc[currentLang].wait_round; statusSub.TextColor3 = COLORS.subtext; statusSub.Font = Enum.Font.Code; statusSub.TextSize = 11; statusSub.TextXAlignment = Enum.TextXAlignment.Left
+
+-- ФУНКЦИЯ ОБНОВЛЕНИЯ ЯЗЫКА
+function updateAllText()
+    tabBtn1.Text = Loc[currentLang].tab1; tabBtn2.Text = Loc[currentLang].tab2
+    btnESP.Text = isESPOn and Loc[currentLang].esp_on or Loc[currentLang].esp_off
+    btnTP.Text = isAutoTP and Loc[currentLang].tp_on or Loc[currentLang].tp_off
+    btnEvade.Text = isAutoEvade and Loc[currentLang].evade_on or Loc[currentLang].evade_off
+    btnLobby.Text = isAutoLobbyTP and Loc[currentLang].lobby_on or Loc[currentLang].lobby_off
+    speedLabel.Text = Loc[currentLang].speed .. math.floor(LocalPlayer.Character.Humanoid.WalkSpeed)
+    resetSpeedBtn.Text = Loc[currentLang].reset
+    if isAbilitySpam then
+        local myRole = getRole(LocalPlayer)
+        if myRole == "Runner" or myRole == "Safe" then
+            local cdLeft = ABILITY_COOLDOWN - (tick() - abilityLastUse)
+            btnAbility.Text = cdLeft > 0 and string.format(Loc[currentLang].ab_cd, math.ceil(cdLeft)) or Loc[currentLang].ab_ready
+        else btnAbility.Text = Loc[currentLang].ab_wait end
+    else btnAbility.Text = Loc[currentLang].ability_off end
+end
+
+-- UI ЛОГИКА
+tabBtn1.MouseButton1Click:Connect(function()
+    tab1.Visible = true; tab2.Visible = false
+    tabBtn1.BackgroundColor3 = COLORS.on; tabBtn1.TextColor3 = Color3.new(0,0,0)
+    tabBtn2.BackgroundColor3 = Color3.fromRGB(40, 40, 40); tabBtn2.TextColor3 = COLORS.subtext
+end)
+tabBtn2.MouseButton1Click:Connect(function()
+    tab1.Visible = false; tab2.Visible = true
+    tabBtn2.BackgroundColor3 = COLORS.on; tabBtn2.TextColor3 = Color3.new(0,0,0)
+    tabBtn1.BackgroundColor3 = Color3.fromRGB(40, 40, 40); tabBtn1.TextColor3 = COLORS.subtext
+end)
+
+-- КРАСИВОЕ ПОЯВЛЕНИЕ ПАНЕЛИ
+toggleBtn.MouseButton1Click:Connect(function()
+    if not dragging then
+        playClick()
+        if main.Visible then
+            TweenService:Create(main, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.fromOffset(0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+            task.wait(0.2); main.Visible = false
+        else
+            main.Visible = true
+            main.Size = UDim2.fromOffset(0, 0); main.Position = UDim2.new(0.5, 0, 0.5, 0)
+            TweenService:Create(main, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(320, 480), Position = UDim2.new(0.5, -160, 0.5, -240)}):Play()
+        end
+    end
+end)
+closeBtn.MouseButton1Click:Connect(function()
+    playClick()
+    TweenService:Create(main, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.fromOffset(0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+    task.wait(0.2); main.Visible = false
+end)
+local function updateButtonVisual(btn, bar, stroke, glow, isActive)
+    btn.BackgroundColor3 = isActive and COLORS.on or COLORS.off
+    btn.TextColor3 = isActive and Color3.fromRGB(0,0,0) or COLORS.text
+    bar.BackgroundColor3 = isActive and Color3.fromRGB(0,0,0) or COLORS.stroke
+    stroke.Transparency = isActive and 0 or 0.8
+    glow.Transparency = 1
+end
+
+btnESP.MouseButton1Click:Connect(function() playClick(); isESPOn = not isESPOn; btnESP.Text = isESPOn and Loc[currentLang].esp_on or Loc[currentLang].esp_off; updateButtonVisual(btnESP, barESP, strESP, glowESP, isESPOn); if isESPOn then RunService.Heartbeat:Connect(updateESP) else updateESP() end end)
+btnTP.MouseButton1Click:Connect(function() playClick(); isAutoTP = not isAutoTP; btnTP.Text = isAutoTP and Loc[currentLang].tp_on or Loc[currentLang].tp_off; updateButtonVisual(btnTP, barTP, strTP, glowTP, isAutoTP); if isAutoTP then startAutoTP() else if tpTask then task.cancel(tpTask) end end end)
+btnEvade.MouseButton1Click:Connect(function() playClick(); isAutoEvade = not isAutoEvade; btnEvade.Text = isAutoEvade and Loc[currentLang].evade_on or Loc[currentLang].evade_off; updateButtonVisual(btnEvade, barEvade, strEvade, glowEvade, isAutoEvade); if isAutoEvade then startAutoEvade() else if evadeTask then task.cancel(evadeTask) end end end)
+btnAbility.MouseButton1Click:Connect(function() playClick(); isAbilitySpam = not isAbilitySpam; if not isAbilitySpam then btnAbility.Text = Loc[currentLang].ability_off end; updateButtonVisual(btnAbility, barAbility, strAbility, glowAb, isAbilitySpam); if isAbilitySpam then startAbilitySpam() else if abilityTask then task.cancel(abilityTask) end end end)
+btnLobby.MouseButton1Click:Connect(function() playClick(); isAutoLobbyTP = not isAutoLobbyTP; btnLobby.Text = isAutoLobbyTP and Loc[currentLang].lobby_on or Loc[currentLang].lobby_off; updateButtonVisual(btnLobby, barLobby, strLobby, glowLob, isAutoLobbyTP) end)
+
+-- ОТСЛЕЖИВАНИЕ РОЛИ И КУЛДАУНА
+
+task.spawn(function()
+    while gui.Parent do
+        task.wait(0.2)
+        local currentRole = getRole(LocalPlayer)
+        if currentRole == "Tagger" or currentRole == "Holder" then
+            statusLbl.Text = Loc[currentLang].role_tagger .. " (" .. currentRole .. ")"
+            statusLbl.TextColor3 = Color3.fromRGB(255, 100, 100); statusSub.Text = currentRole == "Holder" and Loc[currentLang].run_holder or Loc[currentLang].hunt_runners
+            mStrokeOuter.Color = Color3.fromRGB(255, 100, 100); dot.BackgroundColor3 = Color3.fromRGB(255, 100, 100); canTPToLobby = true
+        elseif currentRole == "Runner" or currentRole == "Safe" then
+            statusLbl.Text = Loc[currentLang].role_runner .. " (" .. currentRole .. ")"
+            statusLbl.TextColor3 = Color3.fromRGB(100, 255, 100); statusSub.Text = currentRole == "Safe" and Loc[currentLang].run_safe or Loc[currentLang].run_taggers
+            mStrokeOuter.Color = Color3.fromRGB(100, 255, 100); dot.BackgroundColor3 = Color3.fromRGB(100, 255, 100); canTPToLobby = true
+        else
+            statusLbl.Text = Loc[currentLang].role_lobby; statusLbl.TextColor3 = COLORS.text; statusSub.Text = Loc[currentLang].wait_round
+            mStrokeOuter.Color = COLORS.stroke; dot.BackgroundColor3 = COLORS.stroke
+            if isAutoLobbyTP and canTPToLobby then
+                canTPToLobby = false
+                task.spawn(function()
+                    local _, hrp = getChar(LocalPlayer)
+                    if hrp then
+                        local finish = workspace:FindFirstChild(FINISH_PART_NAME, true)
+                        if finish then hrp.CFrame = CFrame.new(finish.Position + Vector3.new(0, 3, 0)); task.wait(1) end
+                        local podium = workspace:FindFirstChild(PODIUM_NAME, true)
+                        if podium then hrp.CFrame = CFrame.new(podium.Position + Vector3.new(0, 3, 0)); task.wait(1) end
+                        local emotesBtn = findButton("EmotesButton")
+                        if emotesBtn then ultimateClick(emotesBtn); task.wait(1.5); local danceBtn = findButton(EMOTE_TO_PLAY); if danceBtn then ultimateClick(danceBtn) end end
+                    end
+                end)
+            end
+        end
+        if isAbilitySpam then
+            local myRole = getRole(LocalPlayer)
+            if myRole == "Runner" or myRole == "Safe" then
+                local cdLeft = ABILITY_COOLDOWN - (tick() - abilityLastUse)
+                btnAbility.Text = cdLeft > 0 and string.format(Loc[currentLang].ab_cd, math.ceil(cdLeft)) or Loc[currentLang].ab_ready
+            else btnAbility.Text = Loc[currentLang].ab_wait end
+        end
+    end
+end)
+
+print("Super Tag Ultimate V8 (Mega UI) by @2t0 loaded!")
